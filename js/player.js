@@ -134,11 +134,183 @@
     }
   }
 
+  /* ================= 自定义控制栏 =================
+   * 不用原生 controls：iOS 上原生控制栏点击唤出不稳定，且无法统一全屏行为。
+   * 自己实现后，播放/暂停/进度/倍速/全屏/弹幕开关行为在两端一致。
+   */
+  function fmtTime(s) {
+    if (!isFinite(s) || s < 0) s = 0;
+    s = Math.floor(s);
+    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    var p = function (n) { return n < 10 ? '0' + n : '' + n; };
+    return h > 0 ? (h + ':' + p(m) + ':' + p(sec)) : (m + ':' + p(sec));
+  }
+
+  var Ctl = {
+    video: null, stage: null, bound: false,
+    dragging: false, hideTimer: 0, speedIdx: 0,
+    speeds: [1, 1.25, 1.5, 2, 0.75, 0.5],
+
+    init: function (video) {
+      this.video = video;
+      this.stage = document.getElementById('stage');
+      if (this.bound) return;
+      this.bound = true;
+
+      var self = this;
+      var $ = function (id) { return document.getElementById(id); };
+
+      /* 单击视频区域 → 显隐控制栏 */
+      $('tapLayer').addEventListener('click', function () { self.toggleBar(); });
+      /* 控制栏任何操作都重置自动隐藏计时 */
+      $('ctrlBar').addEventListener('click', function () { self.poke(); });
+      $('ctrlBar').addEventListener('touchstart', function () { self.poke(); }, { passive: true });
+
+      $('cPlay').addEventListener('click', function () {
+        if (video.paused) video.play().catch(function () { }); else video.pause();
+        self.poke();
+      });
+
+      var seek = $('cSeek');
+      seek.addEventListener('input', function () { self.dragging = true; });
+      var commit = function () {
+        if (!isFinite(video.duration) || video.duration <= 0) return;
+        var t = (parseFloat(seek.value) / 1000) * video.duration;
+        try { video.currentTime = t; } catch (e) { }
+        $('cTime').textContent = fmtTime(t);
+        self.dragging = false;
+        self.poke();
+      };
+      seek.addEventListener('change', commit);
+      seek.addEventListener('touchend', commit);
+
+      $('cDm').addEventListener('click', function () {
+        var on = !this.classList.contains('on');
+        this.classList.toggle('on', on);
+        var s = {}; s.danmakuOn = !on;   /* on = 关闭弹幕 */
+        Store.patchSettings({ danmakuOn: !on });
+        if (P.dan) P.dan.setOption({ on: !on });
+        toastLite(on ? '弹幕已关闭' : '弹幕已开启');
+        self.poke();
+      });
+
+      $('cSpeed').addEventListener('click', function () {
+        self.speedIdx = (self.speedIdx + 1) % self.speeds.length;
+        var r = self.speeds[self.speedIdx];
+        try { video.playbackRate = r; } catch (e) { }
+        this.textContent = r + '×';
+        self.poke();
+      });
+
+      $('cFull').addEventListener('click', function () { self.fullscreen(); self.poke(); });
+
+      /* 视频状态 → 更新 UI */
+      video.addEventListener('play', function () { $('cPlay').textContent = '❚❚'; self.poke(); });
+      video.addEventListener('pause', function () { $('cPlay').textContent = '▶'; self.poke(); });
+      video.addEventListener('timeupdate', function () { self.syncSeek(); });
+      video.addEventListener('loadedmetadata', function () {
+        $('cDur').textContent = fmtTime(video.duration);
+        self.syncSeek();
+      });
+      video.addEventListener('durationchange', function () {
+        $('cDur').textContent = fmtTime(video.duration);
+      });
+      video.addEventListener('ended', function () {
+        self.stage.classList.remove('immerse');
+        self.poke();
+      });
+      video.addEventListener('waiting', function () { $('cPlay').textContent = '⋯'; });
+      video.addEventListener('playing', function () { $('cPlay').textContent = '❚❚'; });
+      /* 进入原生全屏时同步按钮状态 */
+      video.addEventListener('webkitbeginfullscreen', function () { self.poke(); });
+      video.addEventListener('webkitendfullscreen', function () { self.poke(); });
+    },
+
+    /* 播放新一集时重置 */
+    reset: function () {
+      this.speedIdx = 0;
+      var s = document.getElementById('cSpeed');
+      if (s) s.textContent = '1×';
+      if (this.video) { try { this.video.playbackRate = 1; } catch (e) { } }
+      this.syncSeek();
+      if (this.stage) this.stage.classList.remove('immerse');
+      this.poke();
+    },
+
+    syncSeek: function () {
+      if (this.dragging) return;
+      var v = this.video;
+      if (!v || !isFinite(v.duration) || v.duration <= 0) return;
+      document.getElementById('cSeek').value = Math.round((v.currentTime / v.duration) * 1000);
+      document.getElementById('cTime').textContent = fmtTime(v.currentTime);
+      /* 缓冲进度着色 */
+      try {
+        if (v.buffered.length) {
+          var end = v.buffered.end(v.buffered.length - 1);
+          var pct = Math.min(100, (end / v.duration) * 100);
+          var el = document.getElementById('cSeek');
+          el.style.background = 'linear-gradient(to right, var(--acc) 0%, var(--acc) ' +
+            pct + '%, rgba(255,255,255,.25) ' + pct + '%, rgba(255,255,255,.25) 100%)';
+        }
+      } catch (e) { }
+    },
+
+    toggleBar: function () {
+      if (!this.stage) return;
+      if (this.stage.classList.contains('immerse')) {
+        this.stage.classList.remove('immerse');
+        this.poke();
+      } else {
+        this.stage.classList.add('immerse');
+        clearTimeout(this.hideTimer);
+      }
+    },
+
+    poke: function () {
+      var self = this;
+      if (!this.stage) return;
+      this.stage.classList.remove('immerse');
+      clearTimeout(this.hideTimer);
+      this.hideTimer = setTimeout(function () {
+        if (self.video && !self.video.paused) self.stage.classList.add('immerse');
+      }, 3500);
+    },
+
+    fullscreen: function () {
+      var v = this.video;
+      if (!v) return;
+      /* iOS Safari：必须用视频元素的原生全屏 */
+      if (typeof v.webkitEnterFullscreen === 'function' &&
+          typeof v.webkitSupportsFullscreen === 'boolean') {
+        try { v.webkitEnterFullscreen(); return; } catch (e) { }
+      }
+      /* 标准 API：全屏整个舞台容器，保留自定义控制栏 */
+      var el = document.getElementById('stage');
+      var d = document;
+      if (d.fullscreenElement || d.webkitFullscreenElement) {
+        (d.exitFullscreen || d.webkitExitFullscreen).call(d);
+        return;
+      }
+      var req = el.requestFullscreen || el.webkitRequestFullscreen ||
+                el.webkitRequestFullScreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+      if (req) { try { req.call(el); } catch (e) { } }
+      else if (typeof v.webkitEnterFullscreen === 'function') {
+        try { v.webkitEnterFullscreen(); } catch (e) { }
+      }
+    }
+  };
+
+  function toastLite(msg) {
+    try { if (window.App && App.toast) App.toast(msg, 1200); } catch (e) { }
+  }
+
   g.Player = {
     load: load,
     play: play,
     destroy: destroy,
     attachDanmaku: attachDanmaku,
+    controls: Ctl,
+    fmtTime: fmtTime,
     get danmaku() { return P.dan; },
     get hls() { return P.hls; },
     loadHlsLib: loadHlsLib

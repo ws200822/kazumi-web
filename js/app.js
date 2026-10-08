@@ -162,8 +162,11 @@
           ' <span class="cnt">' + gp.items.length + '</span></div>';
         html += '<div class="grid">';
         gp.items.forEach(function (it, ii) {
+          var col = Store.isCollected({ name: it.name, rule: gp.rule, src: it.src });
           html += '<div class="card" data-gi="' + gi + '" data-ii="' + ii + '">' +
             '<div class="cover-ph">番</div>' +
+            '<div class="star' + (col ? ' on' : '') + '" data-star="1">' +
+              (col ? '★' : '☆') + '</div>' +
             '<div class="meta"><div class="nm">' + esc(it.name) + '</div>' +
             '<div class="src">' + esc(gp.rule) + '</div></div></div>';
         });
@@ -174,6 +177,17 @@
         el.addEventListener('click', function () {
           var gp = groups[+el.dataset.gi], it = gp.items[+el.dataset.ii];
           go('detail', { rule: gp.rule, src: it.src, name: it.name, cover: '' });
+        });
+      });
+      box.querySelectorAll('[data-star]').forEach(function (st) {
+        st.addEventListener('click', function (e) {
+          e.stopPropagation();
+          var card = st.parentNode;
+          var gp = groups[+card.dataset.gi], it = gp.items[+card.dataset.ii];
+          var added = Store.toggleCollect({ name: it.name, rule: gp.rule, src: it.src });
+          st.textContent = added ? '★' : '☆';
+          st.classList.toggle('on', added);
+          toast(added ? '已收藏' : '已取消收藏', 1200);
         });
       });
     };
@@ -287,6 +301,7 @@
   function closeStage() {
     $('#stage').classList.add('hidden');
     document.body.style.overflow = '';
+    unbindProgress();
     Player.destroy();
     if (Player.danmaku) { Player.danmaku.stop(); Player.danmaku.clear(); }
   }
@@ -298,13 +313,45 @@
     el.classList.add('show');
   }
 
+  /* 播放进度节流保存，用于续播 */
+  var _progUnbind = null;
+  function bindProgress(video, key) {
+    if (_progUnbind) { try { _progUnbind(); } catch (e) { } }
+    var last = 0;
+    var onTime = function () {
+      var now = Date.now();
+      if (now - last < 3000) return;
+      last = now;
+      if (isFinite(video.duration) && video.duration > 0) {
+        Store.saveProgress(key, video.currentTime, video.duration);
+      }
+    };
+    var onEnd = function () {
+      if (isFinite(video.duration)) Store.saveProgress(key, 0, video.duration);
+    };
+    video.addEventListener('timeupdate', onTime);
+    video.addEventListener('ended', onEnd);
+    _progUnbind = function () {
+      video.removeEventListener('timeupdate', onTime);
+      video.removeEventListener('ended', onEnd);
+    };
+  }
+
+  function unbindProgress() {
+    if (_progUnbind) { try { _progUnbind(); } catch (e) { } _progUnbind = null; }
+  }
+
   async function loadEpisodeByUrl(ruleName, epUrl, epName) {
     var rule = Rules.byName(ruleName);
     if (!rule) { stageMsg('规则不存在'); return; }
 
     stageMsg('正在解析播放地址…');
     var video = $('#video');
-    $('#videoWrap').querySelector('#danmakuLayer').style.display = '';
+    $('#danmakuLayer').style.display = '';
+    Player.controls.init(video);
+    try { video.pause(); } catch (e) { }
+
+    var pkey = ruleName + '|' + epUrl;
 
     try {
       var info = await Source.playUrl(rule, epUrl);
@@ -322,34 +369,100 @@
       dan.setData([]);
       dan.start();
 
+      var startAt = Store.getProgress(pkey);
+
       await Player.load(video, media, info.format, {
         onError: function (m) { toast(m, 3000); },
-        fallbackUrl: fallback
+        fallbackUrl: fallback,
+        startTime: startAt
       });
 
+      Player.controls.reset();
       stageMsg('');
       video.play().catch(function () { });
+
+      if (startAt > 10) toast('已续播到 ' + Player.fmtTime(startAt));
+      bindProgress(video, pkey);
 
       /* 弹幕异步加载，不阻塞播放 */
       loadDanmaku(ruleName, App.current.name, epName, epUrl);
 
       Store.pushHistory({
         name: App.current.name, rule: ruleName, src: App.current.src,
-        cover: App.current.cover, ep: App.play.ep,
-        epName: epName, epUrl: epUrl
+        cover: App.current.cover, ep: App.play.ep, epName: epName, epUrl: epUrl
       });
 
       renderEpBar();
-      toast('已就绪（' + (info.format || 'auto') + '）');
     } catch (e) {
+      unbindProgress();
       stageMsg('<div>解析失败</div><div class="tiny">' + esc(e.message) + '</div>' +
-        '<div class="btnrow"><button class="btn primary" id="retryBtn">重试</button>' +
-        '<button class="btn" id="altBtn">换个源</button></div>');
+        '<div class="btnrow" style="justify-content:center">' +
+        '<button class="btn primary" id="retryBtn">重试</button>' +
+        '<button class="btn" id="altBtn">换个源试试</button></div>');
       var rb = $('#retryBtn');
       if (rb) rb.addEventListener('click', function () { loadEpisodeByUrl(ruleName, epUrl, epName); });
       var ab = $('#altBtn');
-      if (ab) ab.addEventListener('click', function () { closeStage(); toast('请在详情页切换线路'); });
+      if (ab) ab.addEventListener('click', function () { pickOtherSource(); });
     }
+  }
+
+  /* 当前番剧在其它源上找同一条目 */
+  async function pickOtherSource() {
+    var name = App.current.name;
+    var cur = App.current.rule;
+    var rules = Rules.enabledRules().filter(function (r) { return r.name !== cur; });
+    if (!rules.length) { toast('没有其它启用的源'); return; }
+
+    openPanel('换个源：' + name,
+      '<div class="tiny" style="margin-bottom:10px">在其它 ' + rules.length + ' 个源里搜索同名条目</div>' +
+      '<div id="altList"><div class="empty">搜索中…</div></div>');
+
+    var box = $('#altList');
+    var found = [];
+
+    var render = function () {
+      if (!found.length) { box.innerHTML = '<div class="empty">其它源都没有找到</div>'; return; }
+      box.innerHTML = found.map(function (f, i) {
+        return '<div class="row" data-i="' + i + '"><div class="ic">' + (i + 1) + '</div>' +
+          '<div class="bd"><div class="t1">' + esc(f.name) + '</div>' +
+          '<div class="t2">' + esc(f.rule) + '</div></div></div>';
+      }).join('');
+      box.querySelectorAll('.row').forEach(function (el) {
+        el.addEventListener('click', function () {
+          var f = found[+el.dataset.i];
+          closePanel();
+          App.current.rule = f.rule;
+          App.current.src = f.src;
+          App.chapters = null;
+          App.play.road = 0; App.play.ep = 0;
+          toast('已切换到 ' + f.rule);
+          go('detail', { rule: f.rule, src: f.src, name: name, cover: App.current.cover || '' });
+        });
+      });
+    };
+
+    var tasks = rules.map(function (r) {
+      return {
+        rule: r,
+        fn: async function () {
+          var list = await Source.search(r, name);
+          if (!list.length) throw new Error('无结果');
+          /* 选名字最接近的 */
+          var best = list[0], bestScore = -1;
+          list.forEach(function (x) {
+            var a = x.name.replace(/\s+/g, ''), b = name.replace(/\s+/g, '');
+            var sc = a === b ? 100 : (a.indexOf(b) >= 0 || b.indexOf(a) >= 0 ? 60 : 0);
+            if (sc > bestScore) { bestScore = sc; best = x; }
+          });
+          return { rule: r.name, name: best.name, src: best.src };
+        }
+      };
+    });
+
+    await Source.pool(tasks, Math.max(1, Math.min(6, Store.settings().concurrency || 4)), function (res) {
+      if (res.ok && res.value) { found.push(res.value); render(); }
+    });
+    render();
   }
 
   function renderEpBar() {
@@ -449,13 +562,37 @@
   /* ============ 追番 ============ */
   function renderCollect() {
     var c = Store.collect();
-    if (!c.length) {
-      view.innerHTML = '<div class="empty">还没有追番<br><span class="tiny">搜索后点 ★ 收藏</span></div>';
-      return;
-    }
-    view.innerHTML = '<div class="sec-title">追番列表 <span class="cnt">' + c.length +
-      '</span></div><div class="grid" id="colGrid"></div>';
-    fill($('#colGrid'), c, 'collect');
+    view.innerHTML = '<div class="sec-title">追番列表 <span class="cnt">' + c.length + '</span></div>' +
+      (c.length
+        ? '<div id="colList"></div>'
+        : '<div class="empty">还没有追番<br><span class="tiny">搜索结果或详情页点 ☆ 收藏</span></div>');
+    if (!c.length) return;
+
+    var box = $('#colList');
+    box.innerHTML = c.map(function (x, i) {
+      return '<div class="row" data-i="' + i + '">' +
+        '<div class="ic">★</div>' +
+        '<div class="bd"><div class="t1">' + esc(x.name) + '</div>' +
+        '<div class="t2">' + esc(x.rule) + '</div></div>' +
+        '<button class="btn sm danger" data-del="' + i + '">移除</button></div>';
+    }).join('');
+
+    box.querySelectorAll('.row').forEach(function (el) {
+      el.addEventListener('click', function (e) {
+        if (e.target.dataset && e.target.dataset.del !== undefined) return;
+        var it = c[+el.dataset.i];
+        go('detail', { rule: it.rule, src: it.src, name: it.name, cover: it.cover || '' });
+      });
+    });
+    box.querySelectorAll('[data-del]').forEach(function (b) {
+      b.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var it = c[+b.dataset.del];
+        Store.removeCollect(Store.collectId(it));
+        toast('已移除', 1200);
+        renderCollect();
+      });
+    });
   }
 
   function fmtTime(ts) {
@@ -534,6 +671,8 @@
       '<button class="btn sm" id="rAlive">只启用存活(' + alive.length + ')</button>' +
       '<button class="btn sm" id="rAllOff">全部禁用</button>' +
       '</div>' +
+      '<div class="sec-title">播放优先级 <span class="cnt">搜索与换源按此顺序</span></div>' +
+      '<div id="orderList"></div>' +
       '<div class="btnrow" style="margin-bottom:10px">' +
       '<button class="btn sm" id="rImport">导入规则</button>' +
       '<button class="btn sm" id="rSync">从 GitHub 同步</button>' +
@@ -580,7 +719,29 @@
       view.querySelector('.sec-title .cnt').textContent = c + ' / ' + all.length + ' 启用';
     }
 
+    function drawOrder() {
+      var names = Rules.orderNames();
+      var box = $('#orderList');
+      if (!box) return;
+      if (!names.length) { box.innerHTML = '<div class="empty">没有启用的源</div>'; return; }
+      box.innerHTML = names.map(function (n, i) {
+        return '<div class="row">' +
+          '<div class="ic">' + (i + 1) + '</div>' +
+          '<div class="bd"><div class="t1">' + esc(n) + '</div></div>' +
+          '<button class="btn sm" data-up="' + esc(n) + '" style="margin-right:6px">↑</button>' +
+          '<button class="btn sm" data-dn="' + esc(n) + '">↓</button>' +
+          '</div>';
+      }).join('');
+      box.querySelectorAll('[data-up]').forEach(function (b) {
+        b.addEventListener('click', function () { Rules.moveSource(b.dataset.up, -1); drawOrder(); });
+      });
+      box.querySelectorAll('[data-dn]').forEach(function (b) {
+        b.addEventListener('click', function () { Rules.moveSource(b.dataset.dn, 1); drawOrder(); });
+      });
+    }
+
     drawList();
+    drawOrder();
 
     $('#rFilter').addEventListener('input', function () { rulesFilter = this.value.trim(); drawList(); });
     $('#rAllOn').addEventListener('click', function () { Rules.setEnabledAll(true); drawList(); refreshCount(); });
@@ -716,6 +877,10 @@
       '<div class="field"><label>代理地址（自建 Cloudflare Worker，强烈推荐）</label>' +
       '<input id="stProxy" value="' + esc(net.proxy || '') + '" placeholder="https://xxx.workers.dev"></div>' +
       '<div class="hint" style="margin:-6px 0 12px">留空则只用公共代理抓页面，<b>视频将无法播放</b>。部署方法见「关于」。</div>' +
+      '<div class="field"><label>访问口令（代理设了 ACCESS_KEY 时填这里）</label>' +
+      '<input id="stKey" value="' + esc(net.accessKey || '') + '" placeholder="留空 = 代理未启用口令"></div>' +
+      '<div class="hint" style="margin:-6px 0 12px">代理默认只服务本站页面（校验 Referer）。' +
+      '想让朋友也用、又不想被陌生人白嫖额度，就在 <code>_worker.js</code> 里填 ACCESS_KEY，然后在这里填同样的值。</div>' +
       '<div class="switch"><div><div class="lbl">公共代理兜底</div>' +
       '<div class="sub">无自建代理时，用公共 CORS 代理抓页面（慢且不稳定）</div></div>' +
       '<div class="tg' + (net.publicFallback ? ' on' : '') + '" data-net="publicFallback"></div></div>' +
@@ -784,6 +949,7 @@
 
     $('#stSave').addEventListener('click', function () {
       NET.cfg.proxy = $('#stProxy').value.trim();
+      NET.cfg.accessKey = $('#stKey').value.trim();
       NET.save();
       Store.patchSettings({
         concurrency: Math.max(1, Math.min(8, parseInt($('#stConc').value, 10) || 4)),

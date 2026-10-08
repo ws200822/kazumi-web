@@ -129,6 +129,10 @@
     write(K.danmaku, c);
   }
 
+  /* ---------- 源的优先顺序 ---------- */
+  function sourceOrder() { return read('kz.sourceOrder', []); }
+  function setSourceOrder(list) { return write('kz.sourceOrder', list); }
+
   /* ---------- 全局导出/导入 ---------- */
   function exportAll() {
     return {
@@ -161,6 +165,7 @@
     history: history, pushHistory: pushHistory, clearHistory: clearHistory,
     saveProgress: saveProgress, getProgress: getProgress,
     danmakuCache: danmakuCache, setDanmakuCache: setDanmakuCache,
+    sourceOrder: sourceOrder, setSourceOrder: setSourceOrder,
     exportAll: exportAll, importAll: importAll,
     read: read, write: write
   };

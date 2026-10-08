@@ -65,11 +65,21 @@
       <button id="stageInfo">线路</button>
     </div>
     <div id="videoWrap">
-      <video id="video" playsinline controls preload="metadata"></video>
+      <video id="video" playsinline webkit-playsinline preload="metadata"></video>
       <div id="danmakuLayer"></div>
+      <div id="tapLayer"></div>
       <div id="stageMsg" class="stage-msg"></div>
     </div>
     <div class="stage-bottom">
+      <div id="ctrlBar">
+        <button id="cPlay" class="cbtn">▶</button>
+        <span id="cTime" class="ctime">0:00</span>
+        <input id="cSeek" class="cseek" type="range" min="0" max="1000" value="0" step="1">
+        <span id="cDur" class="ctime">0:00</span>
+        <button id="cDm" class="cbtn" title="弹幕开关">弹</button>
+        <button id="cSpeed" class="cbtn" title="倍速">1×</button>
+        <button id="cFull" class="cbtn" title="全屏">⛶</button>
+      </div>
       <div id="epBar"></div>
     </div>
   </div>

@@ -26,6 +26,7 @@
 
   var cfg = {
     proxy: '',              // 自建代理基址，例如 https://kz-proxy.xxx.workers.dev
+    accessKey: '',          // 代理若设了 ACCESS_KEY，这里填同样的值
     publicFallback: true,   // 无自建代理时是否用公共代理
     directFirst: true,      // 先直连试一次
     timeout: 20000
@@ -50,6 +51,7 @@
     var sep = base.indexOf('?') >= 0 ? '&' : '?';
     var u = base + sep + 'url=' + enc(target);
     if (referer) u += '&ref=' + enc(referer);
+    if (cfg.accessKey) u += '&key=' + enc(cfg.accessKey);
     return u;
   }
 

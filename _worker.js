@@ -62,6 +62,55 @@ async function fetchFollow(url, init, depth) {
   return res;
 }
 
+/* ---------- 访问控制 ----------
+ * 站点是公开的（Pages / GitHub Pages 都能被任何人打开），
+ * 但代理不该被陌生人白嫖 —— 会烧掉你每天 10 万次的免费额度。
+ *
+ * 两道闸门，都在下面这个配置块里：
+ *   1. CHECK_REFERER：只接受来自本站页面的请求（默认开）
+ *   2. ACCESS_KEY：填了之后，请求必须带 &key=xxx（默认空 = 不启用）
+ *
+ * 想更严就把 ACCESS_KEY 填上一串随机字符，然后告诉朋友站点「设置」里也要填同样的值。
+ */
+const CHECK_REFERER = true;
+const ACCESS_KEY = '';
+const ALLOWED_REFERERS = [
+  'kazumi-web-5zj.pages.dev',
+  'ws200822.github.io',
+  'localhost',
+  '127.0.0.1'
+];
+
+function checkAccess(request, reqUrl) {
+  const key = reqUrl.searchParams.get('key') || '';
+
+  if (ACCESS_KEY) {
+    if (key !== ACCESS_KEY) {
+      return json({ error: 'forbidden', hint: '需要在设置里填写正确的访问口令' }, 403);
+    }
+    return null;
+  }
+
+  if (!CHECK_REFERER) return null;
+
+  const ref = request.headers.get('Referer') || '';
+
+  /* 允许本站页面发起的请求 */
+  for (let i = 0; i < ALLOWED_REFERERS.length; i++) {
+    if (ref.indexOf(ALLOWED_REFERERS[i]) >= 0) return null;
+  }
+
+  /* 同源请求（部分浏览器对某些资源不带 Referer） */
+  const sfs = request.headers.get('Sec-Fetch-Site');
+  if (sfs === 'same-origin') return null;
+
+  return json({
+    error: 'forbidden',
+    hint: '这个代理只服务本站页面。如果你是站点主人，改 ALLOWED_REFERERS；' +
+          '想用 curl 测试，加 -e https://kazumi-web-5zj.pages.dev/'
+  }, 403);
+}
+
 async function handleProxy(request, origin) {
   const reqUrl = new URL(request.url);
 
@@ -88,6 +137,10 @@ async function handleProxy(request, origin) {
     request.headers.forEach(function (v, k) { hdrs[k] = v; });
     return json({ ok: true, method: request.method, headers: hdrs });
   }
+
+  /* 访问控制：健康检查与调试端点已在上方放行，其余必须来自本站 */
+  const denied = checkAccess(request, reqUrl);
+  if (denied) return denied;
 
   let targetUrl;
   try {

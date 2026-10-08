@@ -72,9 +72,36 @@
     return r;
   }
 
+  /* 启用的规则，按用户设定的优先顺序返回 */
+  function orderNames() {
+    var saved = Store.sourceOrder() || [];
+    var list = R.enabled.slice();
+    list.sort(function (a, b) {
+      var ia = saved.indexOf(a), ib = saved.indexOf(b);
+      if (ia < 0 && ib < 0) return 0;
+      if (ia < 0) return 1;
+      if (ib < 0) return -1;
+      return ia - ib;
+    });
+    return list;
+  }
+
   function enabledRules() {
-    var set = new Set(R.enabled);
-    return R.all.filter(function (r) { return set.has(r.name); });
+    var byName = {};
+    R.all.forEach(function (r) { byName[r.name] = r; });
+    return orderNames().map(function (n) { return byName[n]; }).filter(Boolean);
+  }
+
+  /* 上移/下移一个源（dir = -1 / +1） */
+  function moveSource(name, dir) {
+    var list = orderNames();
+    var i = list.indexOf(name);
+    if (i < 0) return list;
+    var j = i + dir;
+    if (j < 0 || j >= list.length) return list;
+    var tmp = list[i]; list[i] = list[j]; list[j] = tmp;
+    Store.setSourceOrder(list);
+    return list;
   }
 
   function byName(name) {
@@ -173,6 +200,8 @@
     all: function () { return R.all; },
     bundle: function () { return R.bundle; },
     enabledRules: enabledRules,
+    orderNames: orderNames,
+    moveSource: moveSource,
     byName: byName,
     isEnabled: isEnabled,
     setEnabled: setEnabled,
