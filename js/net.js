@@ -47,9 +47,28 @@
   function viaProxy(target, referer, proxyBase) {
     var base = (proxyBase || cfg.proxy || '').replace(/\/+$/, '');
     if (!base) return null;
-    var u = base + '/?url=' + enc(target);
+    var sep = base.indexOf('?') >= 0 ? '&' : '?';
+    var u = base + sep + 'url=' + enc(target);
     if (referer) u += '&ref=' + enc(referer);
     return u;
+  }
+
+  /* 探测同源代理：站点若与代理同域部署（Cloudflare Pages），
+   * 直接调 /proxy 就没有任何跨域问题，也不需要用户配置。 */
+  async function probeSameOrigin() {
+    if (!location.protocol || location.protocol === 'file:') return false;
+    if (/^minis:/.test(location.protocol)) return false;
+    try {
+      var r = await timedFetch('/proxy', {}, 8000);
+      if (!r.ok) return false;
+      var j = await r.json();
+      if (j && j.ok) {
+        cfg.proxy = '/proxy';
+        save();
+        return true;
+      }
+    } catch (e) { /* 同源代理不存在，正常 */ }
+    return false;
   }
 
   function viaPublic(target, idx) {
@@ -172,6 +191,7 @@
     mediaProxyUrl: mediaProxyUrl,
     imageUrl: imageUrl,
     viaProxy: viaProxy,
+    probeSameOrigin: probeSameOrigin,
     PUBLIC: PUBLIC
   };
 

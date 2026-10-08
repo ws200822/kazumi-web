@@ -400,6 +400,8 @@
   /* ============ 启动 ============ */
   async function boot() {
     await Rules.load();
+    /* 站点与代理同域时（Cloudflare Pages）自动启用 /proxy，无需用户配置 */
+    try { await NET.probeSameOrigin(); } catch (e) { }
 
     $('#btnSearch').addEventListener('click', function () {
       var kw = $('#kw').value.trim();
