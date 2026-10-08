@@ -42,6 +42,26 @@ function isM3U8(target, contentType) {
   return /\.m3u8(\?|#|$)/i.test(target);
 }
 
+/* 手动跟随重定向。
+ * Cloudflare 的 fetch 在 redirect:'follow' 时会在跨主机跳转中丢掉 Range 头，
+ * 结果是视频永远返回 200 + 完整文件，进度条拖不动（实测 1.83 GB 全量下载）。
+ * 这里自己跟，保证 Range 一路带到底。 */
+async function fetchFollow(url, init, depth) {
+  depth = depth || 0;
+  const res = await fetch(url, Object.assign({}, init, { redirect: 'manual' }));
+  if (depth < 5 && [301, 302, 303, 307, 308].indexOf(res.status) >= 0) {
+    const loc = res.headers.get('Location');
+    if (loc) {
+      let next;
+      try { next = new URL(loc, url).toString(); } catch (e) { return res; }
+      const init2 = Object.assign({}, init);
+      if (res.status === 303) init2.method = 'GET';
+      return fetchFollow(next, init2, depth + 1);
+    }
+  }
+  return res;
+}
+
 async function handleProxy(request, origin) {
   const reqUrl = new URL(request.url);
 
@@ -60,6 +80,13 @@ async function handleProxy(request, origin) {
       runtime: 'cloudflare-pages',
       usage: origin + '/proxy?url=<encoded-target>&ref=<referer>&ua=<user-agent>'
     });
+  }
+
+  /* 调试端点：回显 Worker 实际收到的请求头（排查 Range 被谁吞了） */
+  if (target === 'debug') {
+    const hdrs = {};
+    request.headers.forEach(function (v, k) { hdrs[k] = v; });
+    return json({ ok: true, method: request.method, headers: hdrs });
   }
 
   let targetUrl;
@@ -91,11 +118,10 @@ async function handleProxy(request, origin) {
 
   let upstream;
   try {
-    upstream = await fetch(targetUrl.toString(), {
+    upstream = await fetchFollow(targetUrl.toString(), {
       method: request.method === 'HEAD' ? 'HEAD' : (request.method === 'POST' ? 'POST' : 'GET'),
       headers: fwd,
-      body: body,
-      redirect: 'follow'
+      body: body
     });
   } catch (e) {
     return json({ error: 'upstream fetch failed', detail: String(e) }, 502);

@@ -1,6 +1,78 @@
 # 代理部署指南
 
-## 0. 为什么必须部署
+## ⚡ 当前状态：已部署，可直接使用
+
+```
+站点：https://kazumi-web-5zj.pages.dev
+代理：https://kazumi-web-5zj.pages.dev/proxy   （与站点同域，前端自动探测）
+```
+
+**前端不需要任何配置** —— `js/net.js` 启动时会探测同源的 `/proxy`，探测成功就自动启用。
+打开站点直接搜索即可。
+
+如果你要自己重新部署，看第 1 节（Cloudflare Pages，已跑通）；下面第 2 节起是部署到别处的备选方案。
+
+---
+
+## 0.5 为什么最终选了 Cloudflare Pages 而不是 Workers
+
+| | Workers (`*.workers.dev`) | Pages (`*.pages.dev`) |
+|---|---|---|
+| DNS | **被污染到 Facebook IP** | 正常解析 |
+| TLS SNI | **被阻断**（`http=000`） | 正常（`http=403` 握手成功） |
+| 结论 | 部署成功但**完全无法访问** | **可用** |
+
+实测证据（同一个 Cloudflare 边缘 IP `104.19.192.174`，只改 SNI）：
+
+```
+probe12345.pages.dev                          http=403   ← 握手成功
+kazumi-proxy.wangsen200822.workers.dev        http=000   ← 阻断
+api.cloudflare.com                            http=301   ← 正常
+```
+
+`Worker` 脚本本身部署是成功的（API 可查、修改时间正常），纯粹是域名被封。
+
+Pages 还有一个额外好处：**静态站点和代理同域**，前端调 `/proxy` 不产生任何跨域，
+连 CORS 头都不需要。
+
+---
+
+## 1. 部署到 Cloudflare Pages（推荐）
+
+用仓库里的 `deploy_pages.py`，逆向了 wrangler 的上传协议，纯 stdlib + `blake3`。
+
+```bash
+pip install blake3
+CF_TOKEN=<你的Token> python3 deploy_pages.py <ACCOUNT_ID> kazumi-web .
+```
+
+需要 Token 权限：`Account → Cloudflare Pages → Edit`。
+
+### 协议细节（官方文档没写全，踩了四个坑）
+
+1. **资产哈希是 BLAKE3，不是 SHA-256**
+   ```js
+   hash = blake3( base64(文件内容) + 扩展名 ).hex().slice(0, 32)
+   ```
+   算法错了不会报错，而是**部署成功但全站 500**。这是最坑的一个。
+
+2. **上传分五步**，文件内容不在 deployment 那一步：
+   ```
+   GET  /accounts/{acc}/pages/projects/{proj}/upload-token     → jwt（注意是 GET）
+   POST /pages/assets/check-missing   {hashes:[...]}           （Bearer jwt）
+   POST /pages/assets/upload          [{key,value,metadata}]   （Bearer jwt，value 是 base64）
+   POST /pages/assets/upsert-hashes   {hashes:[...]}           （Bearer jwt）
+   POST /accounts/{acc}/pages/projects/{proj}/deployments      （Bearer CF_TOKEN，只传 manifest）
+   ```
+
+3. **`_worker.js` 必须以 `_worker.bundle` 字段上传**，不能放进 manifest。
+   而且它的内容是一个**嵌套的 multipart 表单**（Workers 标准上传格式），不是裸脚本。
+
+4. **Cloudflare 的 fetch 会吞掉 Range 头**（见第 4 节）。
+
+---
+
+## 2. 为什么必须部署代理
 
 浏览器有同源策略。本站需要读取源站的 HTML 才能解析番剧列表和分集，而源站不返回 `Access-Control-Allow-Origin` 头，浏览器会直接拦掉这个请求。
 
@@ -252,3 +324,54 @@ kz.你的域名.com {
 | 自己的 VPS | 看你的机器 |
 
 视频流量走 MP4 直连（不经代理），所以代理只承担 HTML 和 JSON 请求，日常个人使用远远用不完。
+
+---
+
+## 10. Range 头与播放（最重要的一个坑）
+
+**Cloudflare 的 fetch 会剥离 Range 头。**
+
+实测链路：
+
+| 环节 | 结果 |
+|---|---|
+| 浏览器发给 Worker 的 Range | `"range": "bytes=0-1023"` ✅ **到达了** |
+| Worker 转发到源站 | 302 → 手动跟随 → **200 + 全量 1.83 GB**，`content-range: null` ❌ |
+
+即使显式写 `headers: { Range: 'bytes=0-1023' }` 也一样被吞。
+
+**影响**：MP4 走代理时无法拖动进度条（每次 seek 都要从头下整个文件）。
+
+**对策**：`<video>` 元素**不受 CORS 限制**（只有 fetch/XHR/Canvas 受限），
+所以 MP4 一律**直连 CDN**，Range 交给浏览器自己处理。`js/net.js` 已经这么做了：
+
+```js
+function mediaUrl(target, referer, format) {
+  var isHls = format === 'hls' || /\.m3u8(\?|#|$)/i.test(target);
+  if (isHls) return viaProxy(target, referer) || target;  // HLS 必须走代理
+  return target;                                          // MP4 直连，Range 由浏览器处理
+}
+```
+
+直连若被拦，播放器的 `onerror` 会自动回退到代理 URL（能播，但不能拖进度条）。
+
+**HLS 是例外**：m3u8 与 .ts 分片都是独立小文件，不需要 Range，所以走代理没问题
+——而且必须走，因为 hls.js 用 XHR/fetch 加载，受 CORS 限制。
+
+**防盗链实测**：目标 CDN 不检查 Referer。无 Referer / 正确 Referer / pages.dev Referer
+三种情况都返回 `206 + 1024 字节`，`Content-Range: bytes 0-1023/1834237486`。所以 MP4 直连可行。
+
+---
+
+## 11. 环境限制说明
+
+**iSH 内置浏览器不支持视频播放**，实测连 w3schools / MDN 的公开测试视频都返回
+`NETWORK_NO_SOURCE`（`networkState=3`）。所以在这个沙箱里只能验证到：
+
+- ✅ 页面加载、模块初始化
+- ✅ 搜索（12 条结果，2.5 秒）
+- ✅ 章节解析（1 条线路）
+- ✅ 播放地址解码（mp4 直链）
+- ✅ CDN 可达（curl 拿到 206 + 合法 MP4 头）
+- ❌ 实际播放 —— 必须在真机 Safari / Chrome 上测
+
