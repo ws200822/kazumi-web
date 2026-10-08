@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#0f1115">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Kazumi Web</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- 顶栏 -->
+  <header id="topbar">
+    <div id="brand">Kazumi<span>Web</span></div>
+    <div id="searchbox">
+      <input id="kw" type="search" placeholder="搜索番剧…" autocomplete="off" enterkeyhint="search">
+      <button id="btnSearch" aria-label="搜索">搜索</button>
+    </div>
+    <button id="btnMenu" aria-label="菜单">☰</button>
+  </header>
+
+  <!-- 主体 -->
+  <main id="view"></main>
+
+  <!-- 底部导航 -->
+  <nav id="tabbar">
+    <button data-tab="home" class="active"><i>⌂</i><span>首页</span></button>
+    <button data-tab="collect"><i>★</i><span>追番</span></button>
+    <button data-tab="history"><i>↺</i><span>历史</span></button>
+    <button data-tab="rules"><i>⚙</i><span>规则</span></button>
+  </nav>
+
+  <!-- 抽屉菜单 -->
+  <aside id="drawer" class="hidden">
+    <div class="drawer-head">
+      <strong>Kazumi Web</strong>
+      <button id="btnCloseDrawer">✕</button>
+    </div>
+    <nav id="drawerNav">
+      <a data-tab="home">首页</a>
+      <a data-tab="collect">追番列表</a>
+      <a data-tab="history">观看历史</a>
+      <a data-tab="rules">规则管理</a>
+      <a data-tab="settings">设置</a>
+      <a data-tab="about">关于</a>
+    </nav>
+  </aside>
+  <div id="scrim" class="hidden"></div>
+
+  <!-- 东滑面板 -->
+  <aside id="sidepanel" class="hidden">
+    <div class="sp-head"><span id="spTitle">选集</span><button id="spClose">✕</button></div>
+    <div id="spBody"></div>
+  </aside>
+
+  <!-- 播放器浮层 -->
+  <div id="stage" class="hidden">
+    <div class="stage-top">
+      <button id="stageBack">‹ 返回</button>
+      <span id="stageTitle"></span>
+      <button id="stageInfo">线路</button>
+    </div>
+    <div id="videoWrap">
+      <video id="video" playsinline controls preload="metadata"></video>
+      <div id="danmakuLayer"></div>
+      <div id="stageMsg" class="stage-msg"></div>
+    </div>
+    <div class="stage-bottom">
+      <div id="epBar"></div>
+    </div>
+  </div>
+
+  <!-- 轻提示 -->
+  <div id="toast" class="hidden"></div>
+  <!-- 加载遮罩 -->
+  <div id="loader" class="hidden"><div class="spin"></div><span id="loaderText">加载中…</span></div>
+
+</div>
+
+<script src="js/store.js"></script>
+<script src="js/xpath.js"></script>
+<script src="js/net.js"></script>
+<script src="js/rules.js"></script>
+<script src="js/source.js"></script>
+<script src="js/danmaku.js"></script>
+<script src="js/danmaku_api.js"></script>
+<script src="js/player.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
