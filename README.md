@@ -10,6 +10,8 @@
 
 部署 Cloudflare Worker（免费，每天 10 万次请求）：
 
+> 📖 **完整图文步骤见 [DEPLOY.md](DEPLOY.md)**，含验证方法、workers.dev 被阻断的应对、以及 Deno / Vercel / 自建服务器三种备选方案。
+
 1. 打开 https://dash.cloudflare.com ，注册免费账号
 2. `Workers & Pages` → `Create` → `Worker`
 3. 把本仓库 `proxy/worker.js` 的全部内容粘进去 → `Deploy`

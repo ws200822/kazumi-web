@@ -828,13 +828,23 @@
       '<div class="row"><div class="bd"><div class="t1">Kazumi Web</div>' +
       '<div class="t2">规则的网页版实现 · 纯静态可部署到 GitHub Pages</div></div></div>' +
       '<div class="sec-title">必须自建代理</div>' +
-      '<div class="small" style="line-height:1.75">' +
-      '1. 打开 <a href="https://dash.cloudflare.com" target="_blank">dash.cloudflare.com</a>，注册免费账号<br>' +
-      '2. Workers &amp; Pages → Create → Worker<br>' +
-      '3. 把本项目 <code>proxy/worker.js</code> 全部内容粘进去，Deploy<br>' +
-      '4. 复制分配的 <code>https://xxx.workers.dev</code> 地址<br>' +
-      '5. 回到「设置」填入该地址并保存<br><br>' +
-      '没有自建代理时：能搜索、能看分集列表，<b>但视频会 403 或 CORS 报错</b>。' +
+      '<div class="small" style="line-height:1.9">' +
+      '浏览器同源策略会拦掉所有源站请求，公共 CORS 代理实测全部失效（522 超时 / 401 / 已停止服务）。' +
+      '视频能被 <code>&lt;video&gt;</code> 直连播放，但<b>搜索和分集列表必须走代理</b>。<br><br>' +
+      '<b>Cloudflare Workers（推荐，免费 10 万次/天）</b><br>' +
+      '1. 打开 <a href="https://dash.cloudflare.com/sign-up" target="_blank">dash.cloudflare.com/sign-up</a> 注册，去邮箱验证<br>' +
+      '2. 左侧栏 → <code>Workers &amp; Pages</code>（新版在 Compute 下）<br>' +
+      '3. <code>Create</code> → <code>Create Worker</code> → 命名 <code>kazumi-proxy</code> → <code>Deploy</code><br>' +
+      '4. 点 <code>Edit code</code>，清空编辑器，粘贴 ' +
+      '<a href="https://ws200822.github.io/kazumi-web/proxy/worker.js" target="_blank">worker.js 全文</a>' +
+      ' → <code>Deploy</code><br>' +
+      '5. 复制 <code>https://kazumi-proxy.xxx.workers.dev</code> 地址<br>' +
+      '6. 回到「设置」填入并保存<br><br>' +
+      '<b>验证</b>：浏览器打开 <code>你的地址/</code>（带末尾斜杠）应返回 <code>{"ok":true}</code>；<br>' +
+      '再打开 <code>你的地址/?url=https%3A%2F%2Fwww.7sefun.top%2F</code> 应返回一大段 HTML。<br><br>' +
+      '<b>⚠ 坑</b>：<code>workers.dev</code> 在国内部分网络被阻断，部署成功 ≠ 能访问。' +
+      '用手机流量测一下，不通就改用 <a href="https://dash.deno.com" target="_blank">Deno Deploy</a>' +
+      '（用仓库里的 <code>proxy/deno.ts</code>），或绑自己的域名。详见仓库 <code>DEPLOY.md</code>。' +
       '</div>' +
       '<div class="sec-title">数据来源</div>' +
       '<div class="small muted">规则来自 <a href="https://github.com/Predidit/KazumiRules" target="_blank">Predidit/KazumiRules</a>（MIT）<br>' +
